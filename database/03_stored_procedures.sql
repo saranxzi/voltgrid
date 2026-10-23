@@ -218,17 +218,28 @@ RETURNS TABLE (
 ) AS $$
 DECLARE
     v_tariff_id UUID;
+    v_current_status reservation_status_enum;
     v_base_price NUMERIC;
     v_peak_mult NUMERIC;
     v_final_cost NUMERIC;
 BEGIN
-    SELECT tariff_id INTO v_tariff_id
+    IF p_actual_energy_kwh <= 0 THEN
+        RETURN QUERY SELECT FALSE, 0.00::NUMERIC, 'Delivered energy must be greater than zero'::VARCHAR;
+        RETURN;
+    END IF;
+
+    SELECT tariff_id, reservation_status INTO v_tariff_id, v_current_status
     FROM charging_reservation
     WHERE reservation_id = p_reservation_id
     FOR UPDATE;
 
     IF NOT FOUND THEN
         RETURN QUERY SELECT FALSE, 0.00::NUMERIC, 'Reservation not found'::VARCHAR;
+        RETURN;
+    END IF;
+
+    IF v_current_status NOT IN ('CONFIRMED', 'ACTIVE') THEN
+        RETURN QUERY SELECT FALSE, 0.00::NUMERIC, ('Cannot complete a reservation in status ' || v_current_status::text)::VARCHAR;
         RETURN;
     END IF;
 

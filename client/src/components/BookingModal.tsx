@@ -93,7 +93,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bay || !selectedVehicleId || !selectedTariffId) return;
+    if (!bay || !selectedVehicleId || !selectedTariffId) {
+      if (vehicles.length === 0) {
+        setErrorMsg('No registered EV found for your profile. Please add a vehicle first.');
+      }
+      return;
+    }
     setErrorMsg(null);
     setLoading(true);
     try {
@@ -146,15 +151,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block font-medium text-zinc-300 mb-1">Select Your EV</label>
-              <select
-                value={selectedVehicleId}
-                onChange={(e) => setSelectedVehicleId(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-2 text-zinc-100 text-xs focus:outline-none focus:border-zinc-600"
-              >
-                {vehicles.map(v => (
-                  <option key={v.vehicle_id} value={v.vehicle_id}>{v.make} {v.model} ({v.connector_type})</option>
-                ))}
-              </select>
+              {vehicles.length === 0 ? (
+                <div className="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-2 rounded-xl">
+                  No vehicle registered for this persona.
+                </div>
+              ) : (
+                <select
+                  value={selectedVehicleId}
+                  onChange={(e) => setSelectedVehicleId(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-2 text-zinc-100 text-xs focus:outline-none focus:border-zinc-600"
+                >
+                  {vehicles.map(v => (
+                    <option key={v.vehicle_id} value={v.vehicle_id}>{v.make} {v.model} ({v.connector_type})</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>
@@ -256,8 +267,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
           <button
             type="submit"
-            disabled={loading || !isCompatible}
-            className={`w-full py-2.5 rounded-xl font-medium text-xs transition-all ${loading || !isCompatible ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'}`}
+            disabled={loading || !isCompatible || vehicles.length === 0}
+            className={`w-full py-2.5 rounded-xl font-medium text-xs transition-all ${loading || !isCompatible || vehicles.length === 0 ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'}`}
           >
             {loading ? 'Confirming Slot...' : `Confirm Booking • ₹${estimatedCost}`}
           </button>

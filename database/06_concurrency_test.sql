@@ -65,12 +65,12 @@ DECLARE
 BEGIN
     RAISE NOTICE '=== Running Test 2: Testing Physical Connector Compatibility Guard ===';
 
-    -- Vehicle 4 is a Nissan Leaf (CHAdeMO connector)
-    -- Bay 4 only has NACS connector
+    -- Vehicle 9 is an MG Comet EV Urban (TYPE2 connector)
+    -- Bay 2 only has CCS2 connector
     SELECT * INTO v_res FROM sp_book_charging_bay_atomic(
-        'cccccccc-cccc-cccc-cccc-ccccccccccc4', -- Elena Rostova
-        'dddddddd-dddd-dddd-dddd-ddddddddddd4', -- Nissan Leaf (CHAdeMO)
-        'ffffffff-ffff-ffff-ffff-fffffffffff4', -- Bay 4 (NACS only)
+        'cccccccc-cccc-cccc-cccc-ccccccccccc1', -- Aarav Patel
+        'dddddddd-dddd-dddd-dddd-ddddddddddd9', -- MG Comet EV Urban (TYPE2)
+        'ffffffff-ffff-ffff-ffff-fffffffffff2', -- Bay 2 (CCS2 only)
         '11111111-1111-1111-1111-111111111101',
         CURRENT_DATE + INTERVAL '2 days 14 hours',
         CURRENT_DATE + INTERVAL '2 days 15 hours',

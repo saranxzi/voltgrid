@@ -16,15 +16,22 @@ const server = http.createServer(app);
 
 const allowedOrigins = process.env.CLIENT_URL
   ? process.env.CLIENT_URL.split(',').map((s) => s.trim())
-  : ['http://localhost:5173'];
+  : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5000'];
+
+const isOriginAllowed = (origin?: string): boolean => {
+  if (!origin) return true;
+  if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) return true;
+  // Allow local network and private IP ranges for dev/lab setups
+  const isPrivateDev = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin);
+  return process.env.NODE_ENV !== 'production' && isPrivateDev;
+};
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
-      // Allow dynamic cloud/local origins for seamless local and AWS EC2 deployments
-      callback(null, true);
+      callback(new Error('CORS: Origin blocked by policy'));
     }
   },
   credentials: true
@@ -33,7 +40,11 @@ const corsOptions: cors.CorsOptions = {
 const io = new Server(server, {
   cors: {
     origin: (origin, callback) => {
-      callback(null, true);
+      if (isOriginAllowed(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('CORS: Socket origin blocked by policy'));
+      }
     },
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     credentials: true

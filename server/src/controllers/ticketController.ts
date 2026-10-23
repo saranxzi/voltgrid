@@ -49,10 +49,12 @@ export const getTickets = async (req: AuthRequest, res: Response, next: NextFunc
 export const createTicket = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { bayId, faultCategory, severityLevel, description } = createTicketSchema.parse(req.body);
+    const driverId = req.user?.role === 'DRIVER' ? req.user.accountId : null;
+
     const insertRes = await query(
       `INSERT INTO maintenance_ticket (bay_id, reported_by_driver_id, fault_category, severity_level, ticket_status, description)
        VALUES ($1, $2, $3, $4, 'OPEN', $5) RETURNING *;`,
-      [bayId, req.user?.accountId, faultCategory, severityLevel, description]
+      [bayId, driverId, faultCategory, severityLevel, description]
     );
     const ticket = insertRes.rows[0];
 

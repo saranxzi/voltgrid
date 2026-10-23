@@ -1,16 +1,26 @@
 import { io, Socket } from 'socket.io-client';
 
-// Determine backend URL dynamically based on current origin/host
+// Determine backend URL dynamically based on current origin/host and environment
 const getApiBase = () => {
+  if (import.meta.env?.VITE_API_URL) {
+    return `${import.meta.env.VITE_API_URL}/api`;
+  }
   if (typeof window !== 'undefined') {
-    return `http://${window.location.hostname}:5000/api`;
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    return `${protocol}//${hostname}:5000/api`;
   }
   return '/api';
 };
 
 const getSocketBase = () => {
+  if (import.meta.env?.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
   if (typeof window !== 'undefined') {
-    return `http://${window.location.hostname}:5000`;
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    return `${protocol}//${hostname}:5000`;
   }
   return 'http://localhost:5000';
 };
@@ -47,9 +57,17 @@ const customFetch = async (endpoint: string, options: RequestInit = {}) => {
     headers
   });
 
-  const data = await response.json();
+  const contentType = response.headers.get('content-type') || '';
+  let data: any = {};
+  if (contentType.includes('application/json')) {
+    data = await response.json();
+  } else {
+    const text = await response.text();
+    data = { error: text || `HTTP ${response.status} ${response.statusText}` };
+  }
+
   if (!response.ok) {
-    throw new Error(data.error || data.message || 'API request failed');
+    throw new Error(data.error || data.message || `Request failed with status ${response.status}`);
   }
 
   return data;

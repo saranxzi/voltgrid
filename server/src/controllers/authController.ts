@@ -3,9 +3,17 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { query, withTransaction } from '../config/db.js';
-import { AuthRequest } from '../middleware/auth.js';
+import { AuthRequest, JWT_SECRET } from '../middleware/auth.js';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_voltgrid_jwt_key_2026_change_in_prod';
+const ALLOWED_DEMO_PERSONAS = new Set([
+  'aarav.patel@gmail.com',
+  'priya.sharma@yahoo.co.in',
+  'meera.kulkarni@zoho.in',
+  'kabir.singh@evfleet.in',
+  'rajesh.tech@voltgrid.in',
+  'suresh.tech@voltgrid.in',
+  'sunita.rao@voltgrid.in'
+]);
 
 const loginSchema = z.object({ email: z.string().email(), password: z.string().min(1) });
 const quickLoginSchema = z.object({ email: z.string().email() });
@@ -68,7 +76,15 @@ const formatUser = (u: any) => ({
   role: u.user_role,
   driverProfile: u.driver_license_num ? { licenseNumber: u.driver_license_num, loyaltyTier: u.loyalty_tier } : null,
   technicianProfile: u.employee_code ? { employeeCode: u.employee_code, grade: u.certification_grade, zone: u.operational_zone, isOnDuty: u.is_on_duty } : null,
-  vehicles: u.vehicles || []
+  vehicles: (u.vehicles || []).map((v: any) => ({
+    ...v,
+    vehicleId: v.vehicle_id,
+    batteryCapacityKwh: v.battery_capacity_kwh,
+    maxChargeRateKw: v.max_charge_rate_kw,
+    licensePlate: v.license_plate,
+    vinNumber: v.vin_number,
+    connectorType: v.connector_type
+  }))
 });
 
 const signToken = (u: any) => jwt.sign(
@@ -80,6 +96,12 @@ const signToken = (u: any) => jwt.sign(
 export const quickLogin = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { email } = quickLoginSchema.parse(req.body);
+
+    if (!ALLOWED_DEMO_PERSONAS.has(email.toLowerCase())) {
+      res.status(403).json({ success: false, error: 'Quick-login is restricted to designated demo personas.' });
+      return;
+    }
+
     const user = await fetchFullUser('email', email);
     if (!user) {
       res.status(404).json({ success: false, error: 'User persona not found' });
@@ -97,7 +119,8 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;
     }
-    const valid = await bcrypt.compare(password, user.password_hash) || password === 'DemoPass123!';
+    const isTestOrDev = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
+    const valid = await bcrypt.compare(password, user.password_hash) || (isTestOrDev && password === 'DemoPass123!');
     if (!valid) {
       res.status(401).json({ success: false, error: 'Invalid email or password' });
       return;

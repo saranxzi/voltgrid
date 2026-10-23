@@ -9,7 +9,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_voltgrid_jwt_key_2026_change_in_prod';
+export const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_voltgrid_jwt_key_2026_change_in_prod';
 
 export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction): void => {
   const authHeader = req.headers['authorization'];

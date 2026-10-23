@@ -14,6 +14,10 @@ const bookSchema = z.object({
   targetSoc: z.number().min(0).max(100).default(80)
 });
 
+const completeSessionSchema = z.object({
+  actualEnergyKwh: z.number().positive().max(1000)
+});
+
 const notifyBayStatus = async (bayId: string, status: string) => {
   const bayRes = await pool.query(`SELECT station_id FROM charging_bay WHERE bay_id = $1`, [bayId]);
   if (bayRes.rows.length > 0) broadcastBayStatusUpdate(bayRes.rows[0].station_id, bayId, status);
@@ -80,20 +84,29 @@ export const bookReservation = async (req: AuthRequest, res: Response, next: Nex
 export const cancelReservation = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { id } = req.params;
-    const updateRes = await query(
-      `UPDATE charging_reservation
-       SET reservation_status = 'CANCELLED'
-       WHERE reservation_id = $1 AND driver_id = $2 AND reservation_status = 'CONFIRMED'
-       RETURNING reservation_id, bay_id, reservation_status;`,
-      [id, req.user!.accountId]
-    );
+    const isAdmin = req.user?.role === 'ADMIN';
+
+    const updateSql = isAdmin
+      ? `UPDATE charging_reservation
+         SET reservation_status = 'CANCELLED'
+         WHERE reservation_id = $1 AND reservation_status = 'CONFIRMED'
+         RETURNING reservation_id, bay_id, reservation_status;`
+      : `UPDATE charging_reservation
+         SET reservation_status = 'CANCELLED'
+         WHERE reservation_id = $1 AND driver_id = $2 AND reservation_status = 'CONFIRMED'
+         RETURNING reservation_id, bay_id, reservation_status;`;
+
+    const updateParams = isAdmin ? [id] : [id, req.user!.accountId];
+    const updateRes = await query(updateSql, updateParams);
 
     if (updateRes.rows.length === 0) {
       res.status(400).json({ success: false, message: 'Reservation not found or cannot be cancelled' });
       return;
     }
 
-    await notifyBayStatus(updateRes.rows[0].bay_id, 'AVAILABLE');
+    const bayId = updateRes.rows[0].bay_id;
+    await query(`UPDATE charging_bay SET bay_status = 'AVAILABLE' WHERE bay_id = $1 AND bay_status = 'RESERVED';`, [bayId]);
+    await notifyBayStatus(bayId, 'AVAILABLE');
 
     res.json({ success: true, message: 'Reservation cancelled successfully' });
   } catch (error) { next(error); }
@@ -101,23 +114,38 @@ export const cancelReservation = async (req: AuthRequest, res: Response, next: N
 
 export const completeSession = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const updateRes = await query(
-      `UPDATE charging_reservation cr
-       SET reservation_status = 'COMPLETED',
-           energy_delivered_kwh = $2,
-           total_amount_due = ROUND($2 * tp.base_price_per_kwh * tp.peak_multiplier, 2)
-       FROM tariff_plan tp
-       WHERE cr.reservation_id = $1 AND cr.tariff_id = tp.tariff_id
-       RETURNING cr.reservation_id, cr.bay_id, cr.energy_delivered_kwh, cr.total_amount_due AS final_amount, cr.reservation_status;`,
-      [req.params.id, req.body.actualEnergyKwh]
-    );
+    const { id } = req.params;
+    const { actualEnergyKwh } = completeSessionSchema.parse(req.body);
+    const isDriver = req.user?.role === 'DRIVER';
+
+    const updateSql = isDriver
+      ? `UPDATE charging_reservation cr
+         SET reservation_status = 'COMPLETED',
+             energy_delivered_kwh = $2,
+             total_amount_due = ROUND($2 * tp.base_price_per_kwh * tp.peak_multiplier, 2)
+         FROM tariff_plan tp
+         WHERE cr.reservation_id = $1 AND cr.tariff_id = tp.tariff_id
+           AND cr.driver_id = $3 AND cr.reservation_status IN ('CONFIRMED', 'ACTIVE')
+         RETURNING cr.reservation_id, cr.bay_id, cr.energy_delivered_kwh, cr.total_amount_due AS final_amount, cr.reservation_status;`
+      : `UPDATE charging_reservation cr
+         SET reservation_status = 'COMPLETED',
+             energy_delivered_kwh = $2,
+             total_amount_due = ROUND($2 * tp.base_price_per_kwh * tp.peak_multiplier, 2)
+         FROM tariff_plan tp
+         WHERE cr.reservation_id = $1 AND cr.tariff_id = tp.tariff_id
+           AND cr.reservation_status IN ('CONFIRMED', 'ACTIVE')
+         RETURNING cr.reservation_id, cr.bay_id, cr.energy_delivered_kwh, cr.total_amount_due AS final_amount, cr.reservation_status;`;
+
+    const updateParams = isDriver ? [id, actualEnergyKwh, req.user!.accountId] : [id, actualEnergyKwh];
+    const updateRes = await query(updateSql, updateParams);
 
     if (updateRes.rows.length === 0) {
-      res.status(400).json({ success: false, message: 'Reservation not found' });
+      res.status(400).json({ success: false, message: 'Reservation not found, unauthorized, or already completed' });
       return;
     }
 
     const result = updateRes.rows[0];
+    await query(`UPDATE charging_bay SET bay_status = 'AVAILABLE' WHERE bay_id = $1 AND bay_status IN ('OCCUPIED', 'RESERVED');`, [result.bay_id]);
     await notifyBayStatus(result.bay_id, 'AVAILABLE');
 
     res.json({ success: true, finalAmount: result.final_amount, message: 'Charging session successfully finalized' });

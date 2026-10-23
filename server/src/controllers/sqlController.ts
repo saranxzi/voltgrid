@@ -8,18 +8,66 @@ const executeSqlSchema = z.object({
   query: z.string().min(1).max(5000)
 });
 
-// Forbidden destructive patterns for interactive web console sandbox (Defense-in-depth)
-const FORBIDDEN_COMMANDS = [
-  'DROP DATABASE',
-  'DROP TABLE',
-  'DROP SCHEMA',
-  'TRUNCATE',
-  'ALTER SYSTEM',
-  'CREATE USER',
-  'DROP USER',
-  'GRANT ALL',
-  'REVOKE ALL'
-];
+/**
+ * Validates and sanitizes SQL queries for the interactive sandbox console.
+ * Strips comments, collapses whitespace, disallows multi-statement injection,
+ * and blocks destructive DDL, user privilege modifications, and credential theft.
+ */
+export const validateSandboxSql = (rawQuery: string): { allowed: boolean; reason?: string; sanitizedSql: string } => {
+  const trimmed = rawQuery.trim();
+  if (!trimmed) {
+    return { allowed: false, reason: 'Query cannot be empty.', sanitizedSql: '' };
+  }
+
+  // Strip single-line comments (-- ...) and multi-line comments (/* ... */)
+  const strippedComments = trimmed
+    .replace(/--.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ');
+
+  // Normalize whitespace
+  const normalized = strippedComments.replace(/\s+/g, ' ').trim();
+
+  if (!normalized) {
+    return { allowed: false, reason: 'Query cannot be empty after stripping comments.', sanitizedSql: '' };
+  }
+
+  // Disallow statement chaining: check for internal semicolon not at the very end
+  const withoutTrailingSemicolon = normalized.replace(/;+\s*$/, '');
+  if (withoutTrailingSemicolon.includes(';')) {
+    return {
+      allowed: false,
+      reason: 'Security Sandbox Violation: Multiple chained statements (semicolons) are blocked.',
+      sanitizedSql: normalized
+    };
+  }
+
+  // Forbidden destructive patterns (case-insensitive regex with word boundaries)
+  const forbiddenPatterns: Array<{ regex: RegExp; name: string }> = [
+    { regex: /\bDROP\s+(DATABASE|TABLE|SCHEMA|VIEW|MATERIALIZED\s+VIEW|TRIGGER|FUNCTION|PROCEDURE|EXTENSION|INDEX|ROLE|USER)\b/i, name: 'DROP' },
+    { regex: /\bTRUNCATE(\s+TABLE)?\b/i, name: 'TRUNCATE' },
+    { regex: /\bALTER\s+SYSTEM\b/i, name: 'ALTER SYSTEM' },
+    { regex: /\bALTER\s+(USER|ROLE)\b/i, name: 'ALTER USER/ROLE' },
+    { regex: /\b(CREATE|DROP)\s+USER\b/i, name: 'CREATE/DROP USER' },
+    { regex: /\bGRANT\s+ALL\b/i, name: 'GRANT ALL' },
+    { regex: /\bREVOKE\s+ALL\b/i, name: 'REVOKE ALL' },
+    { regex: /\b(GRANT|REVOKE)\b/i, name: 'GRANT/REVOKE' },
+    { regex: /\bCOPY\s+.*?\s+TO\s+PROGRAM\b/i, name: 'COPY TO PROGRAM' },
+    { regex: /\b(pg_shadow|pg_authid)\b/i, name: 'System catalog credentials' },
+    { regex: /\bpassword_hash\b/i, name: 'password_hash' }
+  ];
+
+  for (const { regex, name } of forbiddenPatterns) {
+    if (regex.test(normalized)) {
+      return {
+        allowed: false,
+        reason: `Security Sandbox Violation: '${name}' is blocked in the web console.`,
+        sanitizedSql: normalized
+      };
+    }
+  }
+
+  return { allowed: true, sanitizedSql: normalized };
+};
 
 export const getSqlHistory = async (req: AuthRequest, res: Response): Promise<void> => {
   res.json({
@@ -36,29 +84,26 @@ export const executeSqlConsole = async (req: AuthRequest, res: Response, next: N
     }
 
     const { query: rawQuery } = executeSqlSchema.parse(req.body);
-    const trimmed = rawQuery.trim();
-    const upper = trimmed.toUpperCase();
+    const validation = validateSandboxSql(rawQuery);
 
-    // Security check: Block catastrophic destructive operations
-    for (const forbidden of FORBIDDEN_COMMANDS) {
-      if (upper.includes(forbidden)) {
-        res.status(403).json({
-          success: false,
-          error: `Security Sandbox Violation: '${forbidden}' is blocked in the web console.`
-        });
-        return;
-      }
+    if (!validation.allowed) {
+      res.status(403).json({
+        success: false,
+        error: validation.reason
+      });
+      return;
     }
 
     const start = performance.now();
     const queryId = Math.random().toString(36).substring(2, 9);
+    const queryToRun = validation.sanitizedSql;
 
     const client: pg.PoolClient = await pool.connect();
 
     try {
-      // Allow SELECT, INSERT, UPDATE, DELETE while blocking DROP/TRUNCATE above; enforce 3s timeout
+      // Enforce 3s localized statement timeout; rollback on failure
       await client.query("BEGIN; SET LOCAL statement_timeout = '3000';");
-      const result = await client.query(trimmed);
+      const result = await client.query(queryToRun);
       await client.query("COMMIT;");
       const durationMs = Number((performance.now() - start).toFixed(2));
 
@@ -68,7 +113,7 @@ export const executeSqlConsole = async (req: AuthRequest, res: Response, next: N
       // Log to terminal broadcast stream
       logSqlExecution({
         id: queryId,
-        sql: trimmed,
+        sql: queryToRun,
         durationMs,
         rowCount: result.rowCount ?? rows.length,
         status: 'SUCCESS',
@@ -94,7 +139,7 @@ export const executeSqlConsole = async (req: AuthRequest, res: Response, next: N
 
       logSqlExecution({
         id: queryId,
-        sql: trimmed,
+        sql: queryToRun,
         durationMs,
         status: 'ERROR',
         error: err.message,

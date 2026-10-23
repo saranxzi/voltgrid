@@ -42,7 +42,7 @@ async function runConcurrencyDemo() {
     if (!vehicle) {
       throw new Error('No registered vehicle found for Aarav Patel.');
     }
-    console.log(green(`   ✓ Authenticated as ${loginData.user.firstName} ${loginData.user.lastName} (Vehicle: ${vehicle.licensePlate})`));
+    console.log(green(`   ✓ Authenticated as ${loginData.user.firstName} ${loginData.user.lastName} (Vehicle: ${vehicle.licensePlate || vehicle.license_plate})`));
 
     // Step 2: Fetch Stations & Tariffs to target Bay 1
     console.log(cyan('2. Resolving target charging bay and tariff...'));
@@ -76,7 +76,7 @@ async function runConcurrencyDemo() {
     const endTime = tomorrow.toISOString();
 
     const bookingPayload = {
-      vehicleId: vehicle.vehicleId,
+      vehicleId: vehicle.vehicleId || vehicle.vehicle_id,
       bayId: bay.bay_id,
       tariffId: tariff.tariff_id,
       startTime,

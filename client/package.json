@@ -29,7 +29,9 @@
     "vite": "^5.3.1"
   },
   "optionalDependencies": {
+    "@esbuild/darwin-arm64": "0.21.5",
     "@esbuild/linux-x64": "0.21.5",
+    "@rollup/rollup-darwin-arm64": "4.63.1",
     "@rollup/rollup-linux-x64-gnu": "4.63.1",
     "@rollup/rollup-linux-x64-musl": "4.63.1"
   }

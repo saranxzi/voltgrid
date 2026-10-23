@@ -148,30 +148,57 @@ ORDER BY station_name, session_hour DESC;
 DROP MATERIALIZED VIEW IF EXISTS mv_station_performance_summary;
 
 CREATE MATERIALIZED VIEW mv_station_performance_summary AS
+WITH BayStats AS (
+    SELECT 
+        station_id,
+        COUNT(DISTINCT bay_id) AS total_bays,
+        COUNT(DISTINCT CASE WHEN bay_status = 'AVAILABLE' THEN bay_id END) AS available_bays,
+        COUNT(DISTINCT CASE WHEN bay_status = 'MAINTENANCE' THEN bay_id END) AS maintenance_bays
+    FROM charging_bay
+    GROUP BY station_id
+),
+ReservationStats AS (
+    SELECT 
+        cb.station_id,
+        COUNT(DISTINCT cr.reservation_id) AS total_all_time_reservations,
+        COALESCE(SUM(CASE WHEN cr.reservation_status = 'COMPLETED' THEN cr.energy_delivered_kwh ELSE 0 END), 0.00) AS total_energy_delivered_kwh,
+        COALESCE(SUM(CASE WHEN cr.reservation_status = 'COMPLETED' THEN cr.total_amount_due ELSE 0 END), 0.00) AS total_revenue_generated_usd
+    FROM charging_bay cb
+    JOIN charging_reservation cr ON cb.bay_id = cr.bay_id
+    GROUP BY cb.station_id
+),
+TicketStats AS (
+    SELECT 
+        cb.station_id,
+        COUNT(DISTINCT mt.ticket_id) AS total_incidents_logged,
+        COUNT(DISTINCT CASE WHEN mt.ticket_status IN ('OPEN', 'IN_PROGRESS') THEN mt.ticket_id END) AS active_open_tickets
+    FROM charging_bay cb
+    JOIN maintenance_ticket mt ON cb.bay_id = mt.bay_id
+    GROUP BY cb.station_id
+)
 SELECT 
     cs.station_id,
     cs.station_name,
     cs.city,
     cs.max_grid_capacity_kw,
-    COUNT(DISTINCT cb.bay_id) AS total_bays,
-    COUNT(DISTINCT CASE WHEN cb.bay_status = 'AVAILABLE' THEN cb.bay_id END) AS available_bays,
-    COUNT(DISTINCT CASE WHEN cb.bay_status = 'MAINTENANCE' THEN cb.bay_id END) AS maintenance_bays,
+    COALESCE(bs.total_bays, 0) AS total_bays,
+    COALESCE(bs.available_bays, 0) AS available_bays,
+    COALESCE(bs.maintenance_bays, 0) AS maintenance_bays,
     
-    -- Aggregated metrics over all reservations
-    COUNT(DISTINCT cr.reservation_id) AS total_all_time_reservations,
-    COALESCE(SUM(CASE WHEN cr.reservation_status = 'COMPLETED' THEN cr.energy_delivered_kwh ELSE 0 END), 0.00) AS total_energy_delivered_kwh,
-    COALESCE(SUM(CASE WHEN cr.reservation_status = 'COMPLETED' THEN cr.total_amount_due ELSE 0 END), 0.00) AS total_revenue_generated_usd,
+    -- Aggregated metrics over all reservations (isolated from ticket cardinality)
+    COALESCE(rs.total_all_time_reservations, 0) AS total_all_time_reservations,
+    COALESCE(rs.total_energy_delivered_kwh, 0.00) AS total_energy_delivered_kwh,
+    COALESCE(rs.total_revenue_generated_usd, 0.00) AS total_revenue_generated_usd,
     
     -- Incident metrics
-    COUNT(DISTINCT mt.ticket_id) AS total_incidents_logged,
-    COUNT(DISTINCT CASE WHEN mt.ticket_status IN ('OPEN', 'IN_PROGRESS') THEN mt.ticket_id END) AS active_open_tickets,
+    COALESCE(ts.total_incidents_logged, 0) AS total_incidents_logged,
+    COALESCE(ts.active_open_tickets, 0) AS active_open_tickets,
     
     CURRENT_TIMESTAMP AS last_refreshed_at
 FROM charging_station cs
-LEFT JOIN charging_bay cb ON cs.station_id = cb.station_id
-LEFT JOIN charging_reservation cr ON cb.bay_id = cr.bay_id
-LEFT JOIN maintenance_ticket mt ON cb.bay_id = mt.bay_id
-GROUP BY cs.station_id, cs.station_name, cs.city, cs.max_grid_capacity_kw;
+LEFT JOIN BayStats bs ON cs.station_id = bs.station_id
+LEFT JOIN ReservationStats rs ON cs.station_id = rs.station_id
+LEFT JOIN TicketStats ts ON cs.station_id = ts.station_id;
 
 -- Unique Index required to enable REFRESH MATERIALIZED VIEW CONCURRENTLY (Zero-Downtime Refresh)
 CREATE UNIQUE INDEX uq_mv_station_perf_id ON mv_station_performance_summary(station_id);

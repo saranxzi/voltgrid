@@ -78,7 +78,7 @@ BEGIN
         UPDATE charging_bay SET bay_status = 'OCCUPIED' WHERE bay_id = NEW.bay_id;
     ELSIF NEW.reservation_status IN ('COMPLETED', 'CANCELLED') THEN
         UPDATE charging_bay SET bay_status = 'AVAILABLE' 
-        WHERE bay_id = NEW.bay_id AND bay_status = 'OCCUPIED';
+        WHERE bay_id = NEW.bay_id AND bay_status IN ('OCCUPIED', 'RESERVED');
     END IF;
 
     -- Record Audit Telemetry Event
